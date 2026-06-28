@@ -6,6 +6,22 @@ import os
 from pathlib import Path
 import pypdf
 
+# API clients
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
+
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
+
 st.set_page_config(page_title="NSW Legal Analyzer Pro", page_icon="📜", layout="wide")
 
 # ============== 密码保护 ==============
@@ -20,14 +36,13 @@ if password != CORRECT_PASSWORD:
 
 st.success("✅ 验证通过")
 
-st.subheader("Contract of Sale & Lease 智能分析")
+st.subheader("Contract of Sale & Lease 智能双语分析")
 
 # ============== SIDEBAR ==============
 with st.sidebar:
     st.header("API 设置")
     llm_provider = st.selectbox("选择 LLM", ["Grok (XAI)", "Gemini (Google)", "Claude (Anthropic)"])
     
-    # 从指定 Secrets 读取 Key
     if llm_provider == "Grok (XAI)":
         api_key = st.secrets.get("XAI_API_KEY", st.text_input("XAI_API_KEY", type="password"))
     elif llm_provider == "Gemini (Google)":
@@ -37,12 +52,97 @@ with st.sidebar:
     
     doc_type = st.selectbox("文档类型", ["Contract of Sale", "Lease"])
 
-# 文件上传 + 分析（简化版，完整逻辑可扩展）
-uploaded_file = st.file_uploader("上传文件", type=["pdf", "txt", "docx"])
+# ============== 文件上传 ==============
+uploaded_file = st.file_uploader("📤 上传 NSW 合同或租赁文件", type=["pdf", "txt", "docx"])
 
-if uploaded_file and st.button("🚀 开始分析并生成报告", type="primary"):
-    with st.spinner("分析中..."):
-        st.success("报告生成完成（完整版已支持真实 API 调用）")
-        # 这里添加 Word 生成代码...
+def extract_text(uploaded_file):
+    if uploaded_file.type == "application/pdf":
+        try:
+            reader = pypdf.PdfReader(uploaded_file)
+            return "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
+        except:
+            return ""
+    else:
+        return uploaded_file.read().decode("utf-8", errors="ignore")
 
-st.caption("Secrets 已改为 ANTHROPIC_API_KEY / XAI_API_KEY / GOOGLE_API_KEY")
+def get_prompt(text, doc_type):
+    return f"""You are an expert NSW property solicitor specializing in conveyancing and leasing.
+
+Analyze this {doc_type} document.
+
+Document content:
+{text[:12000]}
+
+Provide detailed structured analysis in **BOTH English and Chinese**.
+
+**ENGLISH ANALYSIS**
+Executive Summary:
+Key Risks (High/Medium/Low):
+Recommendations & Negotiation Points:
+
+**中文分析**
+执行摘要：
+主要风险：
+建议与谈判要点：
+
+Focus on: prescribed disclosures, special conditions, cooling-off, rent review, outgoings, make-good, GST, settlement, bank guarantee."""
+
+def call_grok(api_key, prompt):
+    if not OpenAI: return "Error: openai not installed"
+    try:
+        client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
+        resp = client.chat.completions.create(model="grok-3", messages=[{"role":"user","content":prompt}], temperature=0.3, max_tokens=3500)
+        return resp.choices[0].message.content
+    except Exception as e: return f"Grok Error: {str(e)}"
+
+def call_gemini(api_key, prompt):
+    if not genai: return "Error: google-generativeai not installed"
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        return model.generate_content(prompt).text
+    except Exception as e: return f"Gemini Error: {str(e)}"
+
+def call_anthropic(api_key, prompt):
+    if not anthropic: return "Error: anthropic not installed"
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(model="claude-3-5-sonnet-20241022", max_tokens=3500, messages=[{"role":"user","content":prompt}])
+        return resp.content[0].text
+    except Exception as e: return f"Anthropic Error: {str(e)}"
+
+if uploaded_file:
+    text = extract_text(uploaded_file)
+    st.success(f"✅ 上传成功: {uploaded_file.name}")
+
+    if st.button("🚀 开始分析并生成双语报告", type="primary", use_container_width=True):
+        if not api_key:
+            st.error("请在侧边栏输入或配置 API Key")
+        else:
+            with st.spinner(f"调用 {llm_provider} 进行专业分析..."):
+                prompt = get_prompt(text, doc_type)
+                
+                if llm_provider == "Grok (XAI)":
+                    analysis = call_grok(api_key, prompt)
+                elif llm_provider == "Gemini (Google)":
+                    analysis = call_gemini(api_key, prompt)
+                else:
+                    analysis = call_anthropic(api_key, prompt)
+                
+                # 生成 Word 报告
+                doc = Document()
+                doc.add_heading('NSW Legal Analysis Report', 0)
+                doc.add_paragraph(f"文件: {uploaded_file.name} | LLM: {llm_provider}")
+                doc.add_paragraph(analysis)
+                
+                report_path = f"{Path(uploaded_file.name).stem}_NSW_Analysis_Report.docx"
+                doc.save(report_path)
+                
+                with open(report_path, "rb") as f:
+                    st.download_button("📥 下载中英双语专业报告", f, report_path)
+                
+                st.success("报告生成完成！")
+                with st.expander("查看完整 AI 分析内容"):
+                    st.markdown(analysis)
+
+st.caption("真实 API 集成完成 | Secrets: XAI_API_KEY / GOOGLE_API_KEY / ANTHROPIC_API_KEY")
