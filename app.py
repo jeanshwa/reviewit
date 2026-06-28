@@ -66,32 +66,37 @@ def extract_text(uploaded_file):
         return uploaded_file.read().decode("utf-8", errors="ignore")
 
 def get_prompt(text, doc_type):
-    return f"""You are an expert NSW property solicitor specializing in conveyancing and leasing.
+    return f"""You are an expert NSW property solicitor specializing in conveyancing.
 
-Analyze this {doc_type} document.
+Focus **heavily** on **Special Conditions**, especially those that **modify or override the standard General Conditions** (e.g. cl.7 claims, cl.10 restrictions, risk passing, completion, disclosures).
 
-Document content:
-{text[:12000]}
+Document Type: {doc_type}
 
-Provide detailed structured analysis in **BOTH English and Chinese**.
+Document Content:
+{text[:15000]}
+
+Provide detailed structured analysis in BOTH English and Chinese.
 
 **ENGLISH ANALYSIS**
 Executive Summary:
-Key Risks (High/Medium/Low):
-Recommendations & Negotiation Points:
+**Special Conditions Deep Analysis** (重点):
+- Modifications to General Conditions:
+- Key Risks (High/Medium/Low):
+- Negotiation Recommendations:
 
 **中文分析**
 执行摘要：
-主要风险：
-建议与谈判要点：
-
-Focus on: prescribed disclosures, special conditions, cooling-off, rent review, outgoings, make-good, GST, settlement, bank guarantee."""
+**特别条款深度审查**（重点）：
+- 对通用条款的修改：
+- 主要风险：
+- 谈判建议：
+"""
 
 def call_grok(api_key, prompt):
     if not OpenAI: return "Error: openai not installed"
     try:
         client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
-        resp = client.chat.completions.create(model="grok-3", messages=[{"role":"user","content":prompt}], temperature=0.3, max_tokens=3500)
+        resp = client.chat.completions.create(model="grok-3", messages=[{"role":"user","content":prompt}], temperature=0.3, max_tokens=4000)
         return resp.choices[0].message.content
     except Exception as e: return f"Grok Error: {str(e)}"
 
@@ -107,7 +112,7 @@ def call_anthropic(api_key, prompt):
     if not anthropic: return "Error: anthropic not installed"
     try:
         client = anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(model="claude-3-5-sonnet-20241022", max_tokens=3500, messages=[{"role":"user","content":prompt}])
+        resp = client.messages.create(model="claude-3-5-sonnet-20241022", max_tokens=4000, messages=[{"role":"user","content":prompt}])
         return resp.content[0].text
     except Exception as e: return f"Anthropic Error: {str(e)}"
 
@@ -117,9 +122,9 @@ if uploaded_file:
 
     if st.button("🚀 开始分析并生成双语报告", type="primary", use_container_width=True):
         if not api_key:
-            st.error("请在侧边栏输入或配置 API Key")
+            st.error("请配置 API Key")
         else:
-            with st.spinner(f"调用 {llm_provider} 进行专业分析..."):
+            with st.spinner(f"调用 {llm_provider} 分析中..."):
                 prompt = get_prompt(text, doc_type)
                 
                 if llm_provider == "Grok (XAI)":
@@ -129,7 +134,6 @@ if uploaded_file:
                 else:
                     analysis = call_anthropic(api_key, prompt)
                 
-                # 生成 Word 报告
                 doc = Document()
                 doc.add_heading('NSW Legal Analysis Report', 0)
                 doc.add_paragraph(f"文件: {uploaded_file.name} | LLM: {llm_provider}")
@@ -139,10 +143,10 @@ if uploaded_file:
                 doc.save(report_path)
                 
                 with open(report_path, "rb") as f:
-                    st.download_button("📥 下载中英双语专业报告", f, report_path)
+                    st.download_button("📥 下载中英双语报告", f, report_path)
                 
                 st.success("报告生成完成！")
-                with st.expander("查看完整 AI 分析内容"):
+                with st.expander("查看完整分析"):
                     st.markdown(analysis)
 
-st.caption("真实 API 集成完成 | Secrets: XAI_API_KEY / GOOGLE_API_KEY / ANTHROPIC_API_KEY")
+st.caption("完整版 | Special Conditions 重点审查 | Secrets 配置已支持")
